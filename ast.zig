@@ -14,6 +14,7 @@ const Node = union(enum) {
 
 pub const Statement = union(enum) {
     let_statement: LetStatement,
+    return_statement: ReturnStatement,
 
     pub fn tokenLiteral(self: *const Statement) []const u8 {
         return switch (self.*) {
@@ -66,6 +67,28 @@ pub const LetStatement = struct {
     }
 };
 
+pub const ReturnStatement = struct {
+    token: Token,
+    returnValue: *Expression,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) !ReturnStatement {
+        return ReturnStatement{
+            .token = undefined,
+            .returnValue = try allocator.create(Expression),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *ReturnStatement) void {
+        self.allocator.destroy(self.returnValue);
+    }
+
+    pub fn tokenLiteral(rs: *const ReturnStatement) []const u8 {
+        return rs.token.literal;
+    }
+};
+
 pub const Program = struct {
     statements: std.ArrayList(Statement),
 
@@ -79,6 +102,7 @@ pub const Program = struct {
         for (self.statements.items) |*stmt| {
             switch (stmt.*) {
                 .let_statement => |*ls| ls.deinit(),
+                .return_statement => |*rs| rs.deinit(),
             }
         }
         self.statements.deinit();

@@ -74,6 +74,9 @@ const Parser = struct {
             .LET => .{
                 .let_statement = try self.parseLetStatement(),
             },
+            .RETURN => .{
+                .return_statement = try self.parseReturnStatement(),
+            },
             else => null,
         };
     }
@@ -94,6 +97,20 @@ const Parser = struct {
         try self.expectSemicolon();
 
         stmt.token = stmt_token;
+        return stmt;
+    }
+
+    fn parseReturnStatement(self: *Parser) ParseError!ast.ReturnStatement {
+        const stmt_token = self.curr_token;
+        self.nextToken();
+        while (!self.checkToken(.SEMICOLON)) {
+            self.nextToken();
+        }
+
+        var stmt = try ast.ReturnStatement.init(self.allocator);
+        errdefer stmt.deinit();
+        stmt.token = stmt_token;
+
         return stmt;
     }
 
@@ -125,10 +142,13 @@ const Parser = struct {
 
             const let_stmt = switch (statement.*) {
                 .let_statement => |ls| ls,
+                else => blk: {
+                    try std.testing.expect(false);
+                    break :blk null;
+                },
             };
-
-            try std.testing.expectEqualStrings(name, let_stmt.name.value);
-            try std.testing.expectEqualStrings(name, let_stmt.name.tokenLiteral());
+            try std.testing.expectEqualStrings(name, let_stmt.?.name.value);
+            try std.testing.expectEqualStrings(name, let_stmt.?.name.tokenLiteral());
         }
 
         fn checkParserErrors(parser: *const Parser) !void {
@@ -174,5 +194,29 @@ test "test let statements" {
     for (test_cases, 0..) |test_case, i| {
         const stmt = &program.statements.items[i];
         try Parser.Testing.expectLetStatement(stmt, test_case.expected_identifier);
+    }
+}
+
+test "test return statements" {
+    const input =
+        \\return 5;
+        \\return 10;
+        \\return 993322;
+    ;
+    var lexer = Lexer.init(input);
+    const allocator = std.testing.allocator;
+    var parser = Parser.init(allocator, &lexer);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram();
+    defer program.deinit();
+
+    try Parser.Testing.checkParserErrors(&parser);
+
+    try std.testing.expectEqual(@as(usize, 3), program.statements.items.len);
+
+    for (0..program.statements.items.len) |i| {
+        const stmt = &program.statements.items[i];
+        try std.testing.expectEqualStrings("return", @as(*ast.ReturnStatement, @ptrCast(stmt)).tokenLiteral());
     }
 }
