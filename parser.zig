@@ -16,6 +16,7 @@ const Parser = struct {
     lexer: *Lexer,
     curr_token: Token,
     peek_token: Token,
+    errors: std.ArrayList([]const u8),
 
     pub fn init(allocator: std.mem.Allocator, lexer: *Lexer) Parser {
         var parser = Parser{
@@ -23,6 +24,7 @@ const Parser = struct {
             .lexer = lexer,
             .curr_token = undefined,
             .peek_token = undefined,
+            .errors = std.ArrayList([]const u8).init(allocator),
         };
 
         // Read two tokens to initialize curr_token and peek_token
@@ -30,6 +32,22 @@ const Parser = struct {
         parser.nextToken();
 
         return parser;
+    }
+
+    pub fn deinit(self: *Parser) void {
+        for (self.errors.items) |msg| {
+            self.allocator.free(msg);
+        }
+        self.errors.clearAndFree();
+    }
+
+    fn peekError(self: *Parser, expected: TokenType) !void {
+        const msg = try std.fmt.allocPrint(self.allocator, "expected next token to be {}, got {} instead", .{
+            expected,
+            self.peek_token.type,
+        });
+        errdefer self.allocator.free(msg);
+        try self.errors.append(msg);
     }
 
     fn nextToken(self: *Parser) void {
@@ -81,7 +99,8 @@ const Parser = struct {
 
     fn expectPeek(self: *Parser, expected: TokenType) ParseError!void {
         if (self.peek_token.type != expected) {
-            return error.UnexpectedToken;
+            try self.peekError(expected);
+            return;
         }
         self.nextToken();
     }
@@ -111,6 +130,16 @@ const Parser = struct {
             try std.testing.expectEqualStrings(name, let_stmt.name.value);
             try std.testing.expectEqualStrings(name, let_stmt.name.tokenLiteral());
         }
+
+        fn checkParserErrors(parser: *const Parser) !void {
+            if (parser.errors.items.len != 0) {
+                std.debug.print("parser has {} errors\n", .{parser.errors.items.len});
+                for (parser.errors.items) |msg| {
+                    std.debug.print("parser error: {s}\n", .{msg});
+                }
+            }
+            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
+        }
     };
 };
 
@@ -123,9 +152,12 @@ test "test let statements" {
     var lexer = Lexer.init(input);
     const allocator = std.testing.allocator;
     var parser = Parser.init(allocator, &lexer);
+    defer parser.deinit();
 
     var program = try parser.parseProgram();
     defer program.deinit();
+
+    try Parser.Testing.checkParserErrors(&parser);
 
     const TestCase = struct {
         expected_identifier: []const u8,
