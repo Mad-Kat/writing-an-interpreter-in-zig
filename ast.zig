@@ -41,6 +41,7 @@ pub const Expression = union(enum) {
     integer_literal: IntegerLiteral,
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
+    boolean: Boolean,
 
     pub fn tokenLiteral(self: *const Expression) []const u8 {
         return switch (self.*) {
@@ -52,6 +53,19 @@ pub const Expression = union(enum) {
         return switch (self.*) {
             inline else => |impl| impl.string(allocator),
         };
+    }
+};
+
+pub const Boolean = struct {
+    token: Token,
+    value: bool,
+
+    pub fn tokenLiteral(b: *const Boolean) []const u8 {
+        return b.token.literal;
+    }
+
+    pub fn string(b: *const Boolean, allocator: std.mem.Allocator) ![]const u8 {
+        return allocator.dupe(u8, b.token.literal);
     }
 };
 
