@@ -68,6 +68,7 @@ const Parser = struct {
         parser.registerPrefix(.MINUS, @This().parsePrefixExpression) catch {};
         parser.registerPrefix(.TRUE, @This().parseBoolean) catch {};
         parser.registerPrefix(.FALSE, @This().parseBoolean) catch {};
+        parser.registerPrefix(.LPAREN, @This().parseGroupedExpression) catch {};
 
         parser.registerInfix(.PLUS, @This().parseInfixExpression) catch {};
         parser.registerInfix(.MINUS, @This().parseInfixExpression) catch {};
@@ -214,6 +215,16 @@ const Parser = struct {
             .token = self.curr_token,
             .value = self.curr_token.type == .TRUE,
         } };
+    }
+
+    fn parseGroupedExpression(self: *Parser) ParseError!ast.Expression {
+        self.nextToken();
+
+        const exp = try self.parseExpression(.LOWEST);
+
+        try self.expectPeek(.RPAREN);
+
+        return exp;
     }
 
     fn parseIntegerLiteral(self: *Parser) ParseError!ast.Expression {
@@ -618,6 +629,11 @@ test "test parsing operator precedence" {
         .{ .input = "false", .expected = "false" },
         .{ .input = "3 > 5 == false", .expected = "((3 > 5) == false)" },
         .{ .input = "3 < 5 == true", .expected = "((3 < 5) == true)" },
+        .{ .input = "1 + (2 + 3) + 4", .expected = "((1 + (2 + 3)) + 4)" },
+        .{ .input = "(5 + 5) * 2", .expected = "((5 + 5) * 2)" },
+        .{ .input = "2 / (5 + 5)", .expected = "(2 / (5 + 5))" },
+        .{ .input = "-(5 + 5)", .expected = "(-(5 + 5))" },
+        .{ .input = "!(true == true)", .expected = "(!(true == true))" },
     };
     for (input) |tt| {
         var lexer = Lexer.init(tt.input);
