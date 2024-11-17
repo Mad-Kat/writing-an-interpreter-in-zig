@@ -42,6 +42,7 @@ pub const Expression = union(enum) {
     prefix_expression: PrefixExpression,
     infix_expression: InfixExpression,
     boolean: Boolean,
+    if_expression: IfExpression,
 
     pub fn tokenLiteral(self: *const Expression) []const u8 {
         return switch (self.*) {
@@ -183,11 +184,13 @@ pub const InfixExpression = struct {
         switch (self.left.*) {
             .prefix_expression => |*pe| pe.deinit(),
             .infix_expression => |*ie| ie.deinit(),
+            .if_expression => |*ie| ie.deinit(),
             else => {},
         }
         switch (self.right.*) {
             .prefix_expression => |*pe| pe.deinit(),
             .infix_expression => |*ie| ie.deinit(),
+            .if_expression => |*ie| ie.deinit(),
             else => {},
         }
         // Then free the expression pointers themselves
@@ -216,6 +219,90 @@ pub const InfixExpression = struct {
         try out.appendSlice(" ");
         try out.appendSlice(right_str);
         try out.appendSlice(")");
+
+        return out.toOwnedSlice();
+    }
+};
+
+pub const BlockStatement = struct {
+    token: Token,
+    statements: std.ArrayList(Statement),
+
+    pub fn deinit(self: *BlockStatement) void {
+        self.statements.deinit();
+    }
+
+    pub fn tokenLiteral(bs: *const BlockStatement) []const u8 {
+        return bs.token.literal;
+    }
+
+    pub fn string(bs: *const BlockStatement, allocator: std.mem.Allocator) ![]const u8 {
+        var out = std.ArrayList(u8).init(allocator);
+        errdefer out.deinit();
+
+        for (bs.statements.items) |stmt| {
+            if (stmt.string(allocator)) |stmt_str| {
+                defer allocator.free(stmt_str);
+                try out.appendSlice(stmt_str);
+            } else |err| {
+                out.deinit();
+                return err;
+            }
+        }
+
+        return out.toOwnedSlice();
+    }
+};
+
+pub const IfExpression = struct {
+    token: Token,
+    condition: *Expression,
+    consequence: BlockStatement,
+    alternative: ?BlockStatement,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) !IfExpression {
+        return IfExpression{
+            .token = undefined,
+            .condition = try allocator.create(Expression),
+            .consequence = undefined,
+            .alternative = null,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *IfExpression) void {
+        switch (self.condition.*) {
+            .prefix_expression => |*pe| pe.deinit(),
+            .infix_expression => |*ie| ie.deinit(),
+            .if_expression => |*ie| ie.deinit(),
+            else => {},
+        }
+
+        self.consequence.statements.deinit();
+        if (self.alternative) |*alt| {
+            alt.statements.deinit();
+        }
+        self.allocator.destroy(self.condition);
+    }
+
+    pub fn tokenLiteral(ie: *const IfExpression) []const u8 {
+        return ie.token.literal;
+    }
+
+    pub fn string(ie: *const IfExpression, allocator: std.mem.Allocator) anyerror![]const u8 {
+        var out = std.ArrayList(u8).init(allocator);
+        errdefer out.deinit();
+
+        try out.appendSlice("if");
+        try out.appendSlice(try ie.condition.string(allocator));
+        try out.appendSlice(" ");
+        try out.appendSlice(try ie.consequence.string(allocator));
+
+        if (ie.alternative != null) {
+            try out.appendSlice("else ");
+            try out.appendSlice(try ie.alternative.?.string(allocator));
+        }
 
         return out.toOwnedSlice();
     }
@@ -311,6 +398,9 @@ pub const Program = struct {
                             pe.deinit();
                         },
                         .infix_expression => |*ie| {
+                            ie.deinit();
+                        },
+                        .if_expression => |*ie| {
                             ie.deinit();
                         },
                         else => {},
