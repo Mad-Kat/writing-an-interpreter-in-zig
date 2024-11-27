@@ -43,6 +43,7 @@ pub const Expression = union(enum) {
     infix_expression: InfixExpression,
     boolean: Boolean,
     if_expression: IfExpression,
+    function_expression: FunctionExpression,
 
     pub fn tokenLiteral(self: *const Expression) []const u8 {
         return switch (self.*) {
@@ -185,12 +186,14 @@ pub const InfixExpression = struct {
             .prefix_expression => |*pe| pe.deinit(),
             .infix_expression => |*ie| ie.deinit(),
             .if_expression => |*ie| ie.deinit(),
+            .function_expression => |*fe| fe.deinit(),
             else => {},
         }
         switch (self.right.*) {
             .prefix_expression => |*pe| pe.deinit(),
             .infix_expression => |*ie| ie.deinit(),
             .if_expression => |*ie| ie.deinit(),
+            .function_expression => |*fe| fe.deinit(),
             else => {},
         }
         // Then free the expression pointers themselves
@@ -228,6 +231,12 @@ pub const BlockStatement = struct {
     token: Token,
     statements: std.ArrayList(Statement),
 
+    pub fn init(allocator: std.mem.Allocator) BlockStatement {
+        return .{
+            .token = undefined,
+            .statements = std.ArrayList(Statement).init(allocator),
+        };
+    }
     pub fn deinit(self: *BlockStatement) void {
         self.statements.deinit();
     }
@@ -249,6 +258,68 @@ pub const BlockStatement = struct {
                 return err;
             }
         }
+
+        return out.toOwnedSlice();
+    }
+};
+
+pub const FunctionExpression = struct {
+    token: Token,
+    parameters: std.ArrayList(Identifier),
+    body: BlockStatement,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) !FunctionExpression {
+        return FunctionExpression{
+            .token = undefined,
+            .parameters = std.ArrayList(Identifier).init(allocator),
+            .body = undefined,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *FunctionExpression) void {
+        // Clean up parameters
+        self.parameters.deinit();
+
+        // Clean up body's statements
+        for (self.body.statements.items) |*stmt| {
+            switch (stmt.*) {
+                .expression_statement => |*es| {
+                    switch (es.expression) {
+                        .prefix_expression => |*pe| pe.deinit(),
+                        .infix_expression => |*ie| ie.deinit(),
+                        .if_expression => |*ie| ie.deinit(),
+                        .function_expression => |*fe| fe.deinit(),
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+        }
+        self.body.deinit();
+    }
+
+    pub fn tokenLiteral(fe: *const FunctionExpression) []const u8 {
+        return fe.token.literal;
+    }
+
+    pub fn string(fe: *const FunctionExpression, allocator: std.mem.Allocator) ![]const u8 {
+        var out = std.ArrayList(u8).init(allocator);
+        errdefer out.deinit();
+
+        try out.appendSlice(fe.token.literal);
+        try out.appendSlice("(");
+
+        for (fe.parameters.items) |param| {
+            try out.appendSlice(param.value);
+            // if (param.value != fe.parameters.items[fe.parameters.items.len - 1].value) {
+            //     try out.appendSlice(", ");
+            // }
+        }
+
+        try out.appendSlice(") ");
+        try out.appendSlice(try fe.body.string(allocator));
 
         return out.toOwnedSlice();
     }
@@ -276,6 +347,7 @@ pub const IfExpression = struct {
             .prefix_expression => |*pe| pe.deinit(),
             .infix_expression => |*ie| ie.deinit(),
             .if_expression => |*ie| ie.deinit(),
+            .function_expression => |*fe| fe.deinit(),
             else => {},
         }
 
@@ -402,6 +474,9 @@ pub const Program = struct {
                         },
                         .if_expression => |*ie| {
                             ie.deinit();
+                        },
+                        .function_expression => |*fe| {
+                            fe.deinit();
                         },
                         else => {},
                     }

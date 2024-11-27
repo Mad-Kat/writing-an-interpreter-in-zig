@@ -70,6 +70,7 @@ const Parser = struct {
         parser.registerPrefix(.FALSE, @This().parseBoolean) catch {};
         parser.registerPrefix(.LPAREN, @This().parseGroupedExpression) catch {};
         parser.registerPrefix(.IF, @This().parseIfExpression) catch {};
+        parser.registerPrefix(.FUNCTION, @This().parseFunctionLiteral) catch {};
 
         parser.registerInfix(.PLUS, @This().parseInfixExpression) catch {};
         parser.registerInfix(.MINUS, @This().parseInfixExpression) catch {};
@@ -262,23 +263,62 @@ const Parser = struct {
         return .{ .if_expression = if_expr };
     }
 
-    fn parseBlockStatement(self: *Parser) ParseError!ast.BlockStatement {
-        const token = self.curr_token;
-        var list = std.ArrayList(ast.Statement).init(self.allocator);
+    fn parseFunctionLiteral(self: *Parser) ParseError!ast.Expression {
+        var function = try ast.FunctionExpression.init(self.allocator);
+        errdefer function.parameters.deinit();
 
+        function.token = self.curr_token;
+
+        try self.expectPeek(.LPAREN);
+        try self.parseFunctionParameters(&function);
+
+        try self.expectPeek(.LBRACE);
+
+        // Initialize the body with the allocator
+        function.body = ast.BlockStatement.init(self.allocator);
+        errdefer function.body.deinit();
+
+        // Parse the body
+        function.body = try self.parseBlockStatement();
+
+        return .{ .function_expression = function };
+    }
+
+    fn parseFunctionParameters(self: *Parser, function: *ast.FunctionExpression) ParseError!void {
+        if (self.peek_token.type == .RPAREN) {
+            self.nextToken(); // Skip the right paren if no parameters
+            return;
+        }
+
+        self.nextToken(); // Move past LPAREN
+
+        // Parse first parameter
+        try function.parameters.append(.{ .token = self.curr_token, .value = self.curr_token.literal });
+
+        while (self.peek_token.type == .COMMA) {
+            self.nextToken(); // Move to comma
+            self.nextToken(); // Move to parameter
+            try function.parameters.append(.{ .token = self.curr_token, .value = self.curr_token.literal });
+        }
+
+        try self.expectPeek(.RPAREN);
+    }
+
+    fn parseBlockStatement(self: *Parser) ParseError!ast.BlockStatement {
+        var block = ast.BlockStatement.init(self.allocator);
+        errdefer block.deinit();
+
+        block.token = self.curr_token;
         self.nextToken();
 
         while (!self.checkToken(.RBRACE) and !self.checkToken(.EOF)) {
             if (try self.parseStatement()) |stmt| {
-                try list.append(stmt);
+                try block.statements.append(stmt);
             }
             self.nextToken();
         }
 
-        return .{
-            .token = token,
-            .statements = list,
-        };
+        return block;
     }
 
     fn parsePrefixExpression(self: *Parser) ParseError!ast.Expression {
@@ -619,7 +659,6 @@ test "test parsing prefix expression" {
         }
     }
 }
-
 test "test parsing infix expressions" {
     const Value = union(enum) { int: i64, bool_value: bool };
 
@@ -771,5 +810,77 @@ test "test if else expression" {
         try std.testing.expectEqual(@as(usize, 1), expr_stmt.expression.if_expression.alternative.?.statements.items.len);
         const alternative = &expr_stmt.expression.if_expression.alternative.?.statements.items[0].expression_statement;
         try Parser.Testing.testIdentifier(alternative.expression, "y");
+    }
+}
+
+test "test function literal parsing" {
+    const input = "fn(x, y) { x + y; }";
+    var lexer = Lexer.init(input);
+    const allocator = std.testing.allocator;
+    var parser = Parser.init(allocator, &lexer);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram();
+    defer program.deinit();
+
+    try Parser.Testing.checkParserErrors(&parser);
+
+    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+
+    for (0..program.statements.items.len) |i| {
+        const stmt = &program.statements.items[i];
+        const expr_stmt = @as(*ast.ExpressionStatement, @ptrCast(stmt));
+
+        const function_expression = expr_stmt.expression.function_expression;
+
+        try std.testing.expectEqual(@as(usize, 2), function_expression.parameters.items.len);
+
+        try std.testing.expectEqualStrings(function_expression.parameters.items[0].value, "x");
+        try std.testing.expectEqualStrings(function_expression.parameters.items[1].value, "y");
+
+        try std.testing.expectEqual(@as(usize, 1), function_expression.body.statements.items.len);
+        try Parser.Testing.testInfixExpression(function_expression.body.statements.items[0].expression_statement.expression, "x", "+", "y");
+    }
+}
+
+test "test function parameter parsing" {
+    const allocator = std.testing.allocator;
+
+    // Define the test cases with their expected parameters
+    const TestCase = struct {
+        input: []const u8,
+        expected_params: []const []const u8,
+    };
+
+    const test_cases = [_]TestCase{
+        .{ .input = "fn() {};", .expected_params = &[_][]const u8{} },
+        .{ .input = "fn(x) {};", .expected_params = &[_][]const u8{"x"} },
+        .{ .input = "fn(x, y, z) {};", .expected_params = &[_][]const u8{ "x", "y", "z" } },
+    };
+
+    for (test_cases) |tt| {
+        var lexer = Lexer.init(tt.input);
+        var parser = Parser.init(allocator, &lexer);
+        defer parser.deinit();
+
+        var program = try parser.parseProgram();
+        defer program.deinit();
+
+        try Parser.Testing.checkParserErrors(&parser);
+
+        // We expect one statement
+        try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+
+        const stmt = &program.statements.items[0];
+        const expr_stmt = stmt.expression_statement;
+        const function = expr_stmt.expression.function_expression;
+
+        // Check number of parameters
+        try std.testing.expectEqual(tt.expected_params.len, function.parameters.items.len);
+
+        // Check each parameter
+        for (tt.expected_params, 0..) |expected_param, i| {
+            try std.testing.expectEqualStrings(expected_param, function.parameters.items[i].value);
+        }
     }
 }
